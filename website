@@ -1,0 +1,165 @@
+require('dotenv').config();
+
+const express = require('express');
+const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
+const path = require('path');
+const mongoose = require('mongoose');
+
+const app = express();
+
+/* ===================== AUTO CONFIG ===================== */
+
+// Auto port (for hosting)
+const PORT = process.env.PORT || 3000;
+
+// Auto MongoDB fallback (you can replace this once)
+const MONGODB_URI =
+  process.env.MONGODB_URI ||
+  "mongodb+srv://demo:demo@cluster0.mongodb.net/bkgroup"; // replace later
+
+// Email optional setup
+let transporter = null;
+if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD
+    }
+  });
+} else {
+  console.log("⚠️ Email not configured (skipping emails)");
+}
+
+/* ===================== MIDDLEWARE ===================== */
+
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname)));
+
+/* ===================== DATABASE ===================== */
+
+mongoose.connect(MONGODB_URI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch(err => console.log("❌ MongoDB Error:", err));
+
+/* ===================== SCHEMAS ===================== */
+
+const applicationSchema = new mongoose.Schema({
+  name: String,
+  phone: String,
+  email: String,
+  qualifications: String,
+  role: String,
+  approved: { type: Boolean, default: false },
+  about: String,
+  salary: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
+const memberSchema = new mongoose.Schema({
+  name: String,
+  phone: String,
+  email: String,
+  qualifications: String,
+  role: String,
+  about: String,
+  salary: String
+});
+
+const investorSchema = new mongoose.Schema({
+  amount: Number,
+  investmentType: String,
+  location: String,
+  createdAt: { type: Date, default: Date.now }
+});
+
+const profitSchema = new mongoose.Schema({
+  total: { type: Number, default: 0 }
+});
+
+/* ===================== MODELS ===================== */
+
+const Application = mongoose.model('Application', applicationSchema);
+const Member = mongoose.model('Member', memberSchema);
+const Investor = mongoose.model('Investor', investorSchema);
+const Profit = mongoose.model('Profit', profitSchema);
+
+/* ===================== ROUTES ===================== */
+
+// Home
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// Join
+app.post('/join', async (req, res) => {
+  const { name, phone, email, qualifications, role } = req.body;
+
+  const appData = new Application({ name, phone, email, qualifications, role });
+  await appData.save();
+
+  // Email (if configured)
+  if (transporter) {
+    transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: process.env.EMAIL_USER,
+      subject: 'New Join Request',
+      text: `${name} applied`
+    });
+  }
+
+  res.send("Application submitted ✅");
+});
+
+// Approve
+app.post('/approve', async (req, res) => {
+  const { id } = req.body;
+
+  const appData = await Application.findById(id);
+  if (!appData) return res.send("Not found");
+
+  appData.approved = true;
+  await appData.save();
+
+  const member = new Member(appData);
+  await member.save();
+
+  res.send("Approved ✅");
+});
+
+// Get members
+app.get('/api/members', async (req, res) => {
+  const members = await Member.find();
+  res.json(members);
+});
+
+// Invest
+app.post('/invest', async (req, res) => {
+  const { amount, investmentType, location } = req.body;
+
+  await new Investor({ amount, investmentType, location }).save();
+
+  let profit = await Profit.findOne();
+  if (!profit) profit = new Profit({ total: 0 });
+
+  profit.total += Number(amount);
+  await profit.save();
+
+  res.send("Investment saved ✅");
+});
+
+// Profit API
+app.get('/api/profit', async (req, res) => {
+  let profit = await Profit.findOne();
+  if (!profit) profit = { total: 0 };
+
+  res.json(profit);
+});
+
+/* ===================== START ===================== */
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
